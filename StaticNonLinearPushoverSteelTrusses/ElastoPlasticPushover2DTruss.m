@@ -1,10 +1,10 @@
-function [collec_dx_nodes,collec_dy_nodes,collection_FS,Uglobal,...
-         criticalBarsGlobal,criticalTenCompBarsGlobal,kdam,defBarHistory,...
-         StrBarHistory]=ElastoPlasticPushover2DTruss(E,Fy,A,r,coordxy,ni,...
+function [finalLoads,collecDxNodes,collecDyNodes,collecFS,Uglobal,...
+         criticalBarsGlobal,criticalTenCompBarsGlobal,kdam,defBarHist,...
+         StrBarHist]=ElastoPlasticPushover2DTruss(E,Fy,A,r,coordxy,ni,...
          nf,bc,edofLoads,initialLoads,dle,plotDef,barsplotPD,kdeg)
 %------------------------------------------------------------------------
 % Syntax:
-% [collec_dx_nodes,collec_dy_nodes,collection_FS,Uglobal,...
+% [finalLoads,collecDxNodes,collecDyNodes,collecFS,Uglobal,...
 %  criticalBarsGlobal,criticalTenCompBarsGlobal,dam,defBarHistory,...
 %  StrBarHistory]=ElastoPlasticPushover2DTruss(E,Fy,A,r,coordxy,ni,nf,...
 %  bc,edofLoads,initialLoads,dle,plotDef,barsplotPD,kdeg)
@@ -47,8 +47,7 @@ function [collec_dx_nodes,collec_dy_nodes,collection_FS,Uglobal,...
 %         barsplotPD:            list of chosen bars to analyse their load
 %                                history along the Pushover assessment.
 %                                When no load history analysis is required
-%                                set the parameter to an empty vector [] or
-%                                to 0
+%                                set the parameter to an empty vector []
 %
 %         kdeg:                  stifness degradation of the structure in
 %                                the collapse state in relation to the 
@@ -112,9 +111,7 @@ L=sqrt((coordxy(ni,1)-coordxy(nf,1)).^2+...
 %-------------------------------------------------------------------
 
 % CRITICAL TENSION LOADS
-for i=1:nbars
-    critical_axial_tension_bar(i,1)=Fy(i)*A(i)/1.67;
-end
+critical_axial_tension_bar=Fy.*A./1.67;
 
 % CRITICAL COMPRESSION LOADS
 k=1;
@@ -131,9 +128,9 @@ ey=coordxy(:,2);
 initialLoads1=initialLoads; % storing initial loads 
 dl=sign(initialLoads)*dle; % load increment 
 
-collec_dx_nodes=[zeros(1,nnodes)];
-collec_dy_nodes=[zeros(1,nnodes)];
-collection_FS=[0];
+collecDxNodes=[zeros(1,nnodes)];
+collecDyNodes=[zeros(1,nnodes)];
+collecFS=[0];
 
 criticalBarsGlobal=[];
 criticalTenCompBarsGlobal=[];
@@ -143,8 +140,8 @@ critical_tension_force=0;
 iter=0;
 f=zeros(2*nnodes,1);
 collect_Kred=[];
-defBarHistory=[zeros(nbars,1)]; % To store the bars' deformation history
-StrBarHistory=[zeros(nbars,1)];
+defBarHist=[zeros(nbars,1)]; % To store the bars' deformation history
+StrBarHist=[zeros(nbars,1)];
 while (critical_tension_force==0 && critical_compresion_force==0)
     iter=iter+1;
     if iter==1 % Initial loads
@@ -228,13 +225,13 @@ while (critical_tension_force==0 && critical_compresion_force==0)
         f(edofLoads)=f(edofLoads)+initialLoads;
         continue;
     else
-        collec_dx_nodes=[collec_dx_nodes;
+        collecDxNodes=[collecDxNodes;
                       Uglobal(1:2:2*nnodes)'];
               
-        collec_dy_nodes=[collec_dy_nodes;
+        collecDyNodes=[collecDyNodes;
                      Uglobal(2:2:2*nnodes)'];
          
-        % Computing the unitary deformation of each bar
+        % Computing axial deformation of each bar
         
         newCoord(:,1)=coordxy(:,1)+Uglobal(1:2:2*nnodes);
         newCoord(:,2)=coordxy(:,2)+Uglobal(2:2:2*nnodes);
@@ -242,22 +239,30 @@ while (critical_tension_force==0 && critical_compresion_force==0)
         Lnew=sqrt((newCoord(ni,1)-newCoord(nf,1)).^2+...
              (newCoord(ni,2)-newCoord(nf,2)).^2);
   
-        de=(Lnew-L); % Positive when the bar is in tension
-        defBarHistory=[defBarHistory,de];
-        StrBarHistory=[StrBarHistory,es_bars_normal(1,:)'];
+        de=(Lnew-L)./L; % Positive when the bar is in tension
         
+        % Computing unitary axial deformation of each bar
+        defBarHist=[defBarHist,es_bars_normal(1,:)'./A./E];
+        
+        % Storing axial stresses
+        StrBarHist=[StrBarHist,es_bars_normal(1,:)'./A];
+        
+        % Storing bars that yielded in the current load step
         criticalBarsGlobal=[criticalBarsGlobal; 
                               critical_bars_step];
                     
         criticalTenCompBarsGlobal=[criticalTenCompBarsGlobal;
                                       critical_ten_comp_bars];
         
-        plasticNsteps=length(StrBarHistory(1,:))-1;
+        % To properly plot perfect elasto-plastic behaviour of those
+        % bars that yileded. The stress in the consecutive steps must be
+        % the same, only the deformation increases
+        plasticNsteps=length(StrBarHist(1,:))-1;
         if plasticNsteps>=2
             for j=1:nbars
                 for k=1:plasticNsteps-1
                     if criticalBarsGlobal(k,j)~=0
-                        StrBarHistory(j,2+k)=StrBarHistory(j,1+k);
+                        StrBarHist(j,2+k)=StrBarHist(j,1+k);
                     end
                 end
             end
@@ -299,7 +304,7 @@ while (critical_tension_force==0 && critical_compresion_force==0)
         av2=sum(abs(initialLoads))/length(initialLoads);
         
         FS=av2/av1;
-        collection_FS=[collection_FS,FS];
+        collecFS=[collecFS,FS];
         if iter>1
             % To check the structure's stiffness degradation
             K=zeros(2*nnodes,2*nnodes);
@@ -339,13 +344,13 @@ if isempty(barsplotPD)==0
     if barsplotPD(1)>9
         ngt9=ngt9+1;
         bariText2(ngt9,:)=strcat('Bar ',num2str(barsplotPD(1)));
-        plot(defBarHistory(barsplotPD(1),:),collection_FS,'k -','LineWidth',1.8)
+        plot(defBarHist(barsplotPD(1),:),collecFS,'k -','LineWidth',1.8)
         legend(bariText2(1,:))
         hold on
     else
         nlet9=nlet9+1;
         bariText(nlet9,:)=strcat('Bar ',num2str(barsplotPD(1)));
-        plot(defBarHistory(barsplotPD(1),:),collection_FS,'k -','LineWidth',1.8)
+        plot(defBarHist(barsplotPD(1),:),collecFS,'k -','LineWidth',1.8)
         legend(bariText(1,:))
         hold on
     end
@@ -354,13 +359,13 @@ if isempty(barsplotPD)==0
             ngt9=ngt9+1;
             bariText2(ngt9,:)=strcat('Bar ',num2str(barsplotPD(i)));
             
-            plot(defBarHistory(barsplotPD(i),:),collection_FS,'LineWidth',1.8,...
+            plot(defBarHist(barsplotPD(i),:),collecFS,'LineWidth',1.8,...
                 'DisplayName',bariText2(ngt9,:))
         else
             nlet9=nlet9+1;
             bariText(nlet9,:)=strcat('Bar ',num2str(barsplotPD(i)));
             
-            plot(defBarHistory(barsplotPD(i),:),collection_FS,'LineWidth',1.8,...
+            plot(defBarHist(barsplotPD(i),:),collecFS,'LineWidth',1.8,...
                 'DisplayName',bariText(nlet9,:))
         end
     end
@@ -379,14 +384,14 @@ if isempty(barsplotPD)==0
             ngt9=ngt9+1;
         
             bariText2(ngt9,:)=strcat('Bar ',num2str(barsplotPD(1)));
-            plot(defBarHistory(barsplotPD(1),:),StrBarHistory(barsplotPD(1),:),...
+            plot(defBarHist(barsplotPD(1),:),StrBarHist(barsplotPD(1),:),...
                 'k -','LineWidth',1.8)
             legend(bariText2(1,:))
             hold on
         else
             nlet9=nlet9+1;
             bariText(nlet9,:)=strcat('Bar ',num2str(barsplotPD(1)));
-            plot(defBarHistory(barsplotPD(1),:),StrBarHistory(barsplotPD(1),:),...
+            plot(defBarHist(barsplotPD(1),:),StrBarHist(barsplotPD(1),:),...
                 'k -','LineWidth',1.8)
             legend(bariText(1,:))
             hold on
@@ -396,15 +401,15 @@ if isempty(barsplotPD)==0
                 ngt9=ngt9+1;
                 bariText2(ngt9,:)=strcat('Bar ',num2str(barsplotPD(i)));
 
-                plot(defBarHistory(barsplotPD(i),:),...
-                    StrBarHistory(barsplotPD(i),:),...
+                plot(defBarHist(barsplotPD(i),:),...
+                    StrBarHist(barsplotPD(i),:),...
                     'LineWidth',1.8,'DisplayName',bariText2(ngt9,:))
             else
                 nlet9=nlet9+1;
                 bariText(nlet9,:)=strcat('Bar ',num2str(barsplotPD(i)));
 
-                plot(defBarHistory(barsplotPD(i),:),...
-                    StrBarHistory(barsplotPD(i),:),...
+                plot(defBarHist(barsplotPD(i),:),...
+                    StrBarHist(barsplotPD(i),:),...
                     'LineWidth',1.8,'DisplayName',bariText(nlet9,:))
             end
         end
@@ -415,54 +420,7 @@ if isempty(barsplotPD)==0
         hold on
     end
 end
-
-%%------------------- Residual stresses -----------------%%
-plasticNsteps=length(StrBarHistory(1,:))-1;
-if plasticNsteps>1 && isempty(barsplotPD)==0
-    ngt9=0;
-    nlet9=0;
-    
-    residStr(:,1)=zeros(nbars,1);
-    residDef(:,1)=zeros(nbars,1);
-    residStr(:,2)=StrBarHistory(:,plasticNsteps+1)-StrBarHistory(:,2);
-    residDef(:,2)=defBarHistory(:,plasticNsteps+1)-defBarHistory(:,2);
-    
-    figure(4)
-    if barsplotPD(1)>9
-        ngt9=ngt9+1;
-        bariText2(ngt9,:)=strcat('Bar ',num2str(barsplotPD(1)));
-        plot(residDef(1,:),residStr(1,:),'k -','LineWidth',1.8)
-        legend(bariText2(1,:))
-        hold on
-    else
-        nlet9=nlet9+1;
-        bariText(nlet9,:)=strcat('Bar ',num2str(barsplotPD(1)));
-        plot(residDef(1,:),residStr(1,:),'k -','LineWidth',1.8)
-        legend(bariText(1,:))
-        hold on
-    end
-    for i=2:length(barsplotPD)
-        if barsplotPD(i)>9
-            ngt9=ngt9+1;
-            bariText2(ngt9,:)=strcat('Bar ',num2str(barsplotPD(i)));
-            
-            plot(residDef(barsplotPD(i),:),...
-                residStr(barsplotPD(i),:),...
-                'LineWidth',1.8,'DisplayName',bariText2(ngt9,:))
-        else
-            nlet9=nlet9+1;
-            bariText(nlet9,:)=strcat('Bar ',num2str(barsplotPD(i)));
-
-            plot(residDef(barsplotPD(i),:),...
-                residStr(barsplotPD(i),:),...
-                'LineWidth',1.8,'DisplayName',bariText(nlet9,:))
-        end
-    end
-    xlabel('Residual deformation')
-    ylabel('Residual stress')
-    title('Residual stresses-deformation')
-    hold on
-end
+finalLoads=initialLoads;
 
 %%------------- Plotting the deformed structure ---------%%
 
